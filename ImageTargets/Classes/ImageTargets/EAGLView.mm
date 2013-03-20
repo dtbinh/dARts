@@ -15,6 +15,18 @@
 
 #define _USE_MATH_DEFINES
 
+#define PI 3.1415926
+
+#define NOT_ON_BOARD -1
+#define INNER_BULL 0
+#define OUTER_BULL 1
+#define INNER_AREA 2
+#define TRIPLE_RING 3
+#define OUTER_AREA 4
+#define DOUBLE_RING 5
+#define NUMBER_AREA 6
+
+
 float dartboardScalefactor = 200.0f;
 float dartScalefactor = 200.0f;
 int targetIndex = 0;
@@ -75,11 +87,17 @@ namespace {
         const QCAR::TrackableResult* result = state.getTrackableResult(targetIndex);
         modelViewMatrix = QCAR::Tool::convertPose2GLMatrix(result->getPose());
         [self computeDistanceToTarget:result->getPose()];
-        
         [self computeCameraPosition:modelViewMatrix];
         
-        //prints the camera translation to the log
-        NSLog(@"(%f,%f,%f)", cameraPosition.data[12], cameraPosition.data[13],cameraPosition.data[14]);
+        float cam_x = cameraPosition.data[12];
+        float cam_y = cameraPosition.data[13];
+        float cam_z = cameraPosition.data[14];
+        
+        glPushMatrix();
+        glRotatef(90.0f, 0.0f, 1.0f, 0.0f);
+        glTranslatef(cam_x, cam_y, cam_z / 10);
+        [self drawDart];
+        glPopMatrix();
         
         //draw stuff relative to the viewport
         
@@ -224,11 +242,11 @@ namespace {
     CGPoint location = [touch locationInView:self];
     //put plane coordinates into 2D vector
     QCAR::Vec2F coord = [self projectPoint: QCAR::Vec2F(location.x, location.y)];
-    //check if touched point on the screen would be projected on the plane
-    NSLog(@"Touch at: (%f,%f)", coord.data[0], coord.data[1]);
-    if(![self isPointOnPlane:coord]){
-        NSLog(@"Point not on the target!");
-    }
+    float distanceFromOrigin = [self distanceFromOrigin:coord];
+    int targetArea = [self getTargetArea:distanceFromOrigin];
+    [self printTargetArea:targetArea];
+    int number = [self getNumberFromAngle:[self getAngleFromPoint:coord]];
+    [self getScoreBasedOnArea:targetArea andNumber:number];
 }
 
 - (void) touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event
@@ -258,6 +276,202 @@ namespace {
 - (BOOL)isPointOnPlane: (QCAR::Vec2F)point
 {
     return abs(point.data[0]) < (width / 2.0f) && abs(point.data[1]) < (height / 2.0f);
+}
+
+- (float)distanceFromOrigin: (QCAR::Vec2F)point
+{
+    return sqrtf(point.data[0] * point.data[0] + point.data[1] * point.data[1]);
+}
+
+- (int)getScoreBasedOnArea: (int) area andNumber: (int) number
+{
+    int score = 0;
+    
+    if(area == NUMBER_AREA || area == NOT_ON_BOARD){
+        score = 0;
+    }
+    else if(area == INNER_AREA || area == OUTER_AREA){
+        score = number;
+    }
+    else if(area == DOUBLE_RING){
+        score = number * 2;
+    }
+    else if(area == TRIPLE_RING){
+        score = number * 3;
+    }
+    else if(area == OUTER_BULL){
+        score = 25;
+    }
+    else if(area == INNER_BULL){
+        score = 50;
+    }
+    
+    NSLog(@"Score: %i", score);
+    
+    return score;
+}
+
+- (int)getNumberFromAngle: (float) angle
+{
+    int number = 0;
+    
+    float a = angle;
+    
+    if((a >= 351.0f && a <= 360.0f) || (a >= 0.0f && a < 9.0f)){
+        number = 20;
+    }
+    else if(a >= 9.0f && a < 27.0f){
+        number = 1;
+    }
+    else if(a >= 27.0f && a < 45.0f){
+        number = 18;
+    }
+    else if(a >= 45.0f && a < 63.0f){
+        number = 4;
+    }
+    else if(a >= 63.0f && a < 81.0f){
+        number = 13;
+    }
+    else if(a >= 81.0f && a < 99.0f){
+        number = 6;
+    }
+    else if(a >= 99.0f && a < 117.0f){
+        number = 10;
+    }
+    else if(a >= 117.0f && a < 135.0f){
+        number = 15;
+    }
+    else if(a >= 135.0f && a < 153.0f){
+        number = 2;
+    }
+    else if(a >= 153.0f && a < 171.0f){
+        number = 17;
+    }
+    else if(a >= 171.0f && a < 189.0f){
+        number = 3;
+    }
+    else if(a >= 189.0f && a < 207.0f){
+        number = 19;
+    }
+    else if(a >= 207.0f && a < 225.0f){
+        number = 7;
+    }
+    else if(a >= 225.0f && a < 243.0f){
+        number = 16;
+    }
+    else if(a >= 243.0f && a < 261.0f){
+        number = 8;
+    }
+    else if(a >= 261.0f && a < 279.0f){
+        number = 11;
+    }
+    else if(a >= 279.0f && a < 297.0f){
+        number = 14;
+    }
+    else if(a >= 297.0f && a < 315.0f){
+        number = 9;
+    }
+    else if(a >= 315.0f && a < 333.0f){
+        number = 12;
+    }
+    else if(a >= 333.0f && a < 351.0f){
+        number = 5;
+    }
+    
+    NSLog(@"Target number: %i", number);
+    return number;
+
+}
+
+- (float)getAngleFromPoint: (QCAR::Vec2F) point
+{
+    //get data from the points
+    float x = point.data[0];
+    float y = point.data[1];
+    
+    float angle = 0;
+    
+    //1st quadrant
+    if(x > 0 && y > 0){
+        angle = (atan2(abs(x), abs(y)) * 180.0f/PI);
+    }
+    //2nd quadrant
+    else if(x > 0 && y < 0){
+        angle = (atan2(abs(y), abs(x)) * 180.0f/PI) + 90.0f;
+    }
+    //3rd quadrant
+    else if(x < 0 && y < 0){
+        angle = (atan2(abs(x), abs(y)) * 180.0f/PI) + 180.0f;
+    }
+    //4th quadrant
+    else if(x < 0 && y > 0){
+        angle = (atan2(abs(y), abs(x)) * 180.0f/PI) + 270.0f;
+    }
+    
+    //NSLog(@"Angle: %f°", angle);
+    
+    return angle;
+}
+
+- (int)getTargetArea: (float) d
+{
+    int t = 0;
+    
+    if(d >= 0.0f && d < 1.5625f){
+        t = INNER_BULL;
+    }
+    else if(d >= 1.5625f && d < 3.125f){
+        t = OUTER_BULL;
+    }
+    else if(d >= 3.125f && d < 21.09375f){
+        t = INNER_AREA;
+    }
+    else if(d >= 21.09375f && d < 23.046875f){
+        t = TRIPLE_RING;
+    }
+    else if(d >= 23.046875f && d < 35.546875f){
+        t = OUTER_AREA;
+    }
+    else if(d >= 35.546875f && d < 37.5f){
+        t = DOUBLE_RING;
+    }
+    else if(d >= 37.5f && d < 50.0f){
+        t = NUMBER_AREA;
+    }
+    else{
+        t = NOT_ON_BOARD;
+    }
+    return t;
+}
+
+- (void)printTargetArea:(int) a
+{
+    switch (a) {
+        case INNER_BULL:
+            NSLog(@"Target Area: INNER_BULL");
+            break;
+        case OUTER_BULL:
+            NSLog(@"Target Area: OUTER_BULL");
+            break;
+        case INNER_AREA:
+            NSLog(@"Target Area: INNER_AREA");
+            break;
+        case TRIPLE_RING:
+            NSLog(@"Target Area: TRIPLE RING");
+            break;
+        case OUTER_AREA:
+            NSLog(@"Target Area: OUTER_AREA");
+            break;
+        case DOUBLE_RING:
+            NSLog(@"Target Area: DOUBLE_RING");
+            break;
+        case NUMBER_AREA:
+            NSLog(@"Target Area: NUMBER_AREA");
+            break;
+        default:
+            NSLog(@"Target Area: NOT_ON_BOARD");
+            break;
+    }
 }
 
 // called after QCAR is initialised but before the camera starts
@@ -306,7 +520,7 @@ namespace {
             [textureList addObject: [NSString stringWithUTF8String:textureFilenames[i]]];
         }
         
-        [self createLabel: @"Hello"];
+        //[self createLabel: @"Hello"];
     }
     return self;
 }
