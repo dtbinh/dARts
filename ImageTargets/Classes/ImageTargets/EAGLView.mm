@@ -143,6 +143,7 @@ namespace {
 
 - (void)drawDart {
     glPushMatrix();
+    glScalef(0.5f, 0.5f, 0.5f);
     glVertexPointer(3, GL_FLOAT, 0, dartVerts);
     glNormalPointer(GL_FLOAT, 0, dartNormals);
     glTexCoordPointer(2, GL_FLOAT, 0, dartTexCoords);
