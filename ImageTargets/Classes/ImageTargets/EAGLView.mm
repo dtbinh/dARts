@@ -20,6 +20,9 @@ float dartScalefactor = 200.0f;
 int targetIndex = 0;
 float distance;
 QCAR::Matrix44F modelViewMatrix;
+QCAR::Matrix44F cameraPosition;
+UILabel* label;
+NSString  *labelString;
 float width = 247.0f;
 float height = 173.0f;
 
@@ -65,8 +68,6 @@ namespace {
     glLoadMatrixf(qUtils.projectionMatrix.data);
     
     //draw stuff that is always visible
-    //glTranslatef(0.0f, 0.0f, 50.0f);
-    //[self drawDart];
     
     
     // draw stuff that is only visible when we see the target
@@ -74,6 +75,11 @@ namespace {
         const QCAR::TrackableResult* result = state.getTrackableResult(targetIndex);
         modelViewMatrix = QCAR::Tool::convertPose2GLMatrix(result->getPose());
         [self computeDistanceToTarget:result->getPose()];
+        
+        [self computeCameraPosition:modelViewMatrix];
+        
+        //prints the camera translation to the log
+        NSLog(@"(%f,%f,%f)", cameraPosition.data[12], cameraPosition.data[13],cameraPosition.data[14]);
         
         //draw stuff relative to the viewport
         
@@ -118,6 +124,11 @@ namespace {
     distance = sqrt(position.data[0] * position.data[0] +
                     position.data[1] * position.data[1] +
                     position.data[2] * position.data[2]);
+}
+
+- (void)computeCameraPosition:(QCAR::Matrix44F)modelViewMatrix {
+    QCAR::Matrix44F inverseMV = SampleMath::Matrix44FInverse(modelViewMatrix);
+    cameraPosition = SampleMath::Matrix44FTranspose(inverseMV);
 }
 
 - (void)drawBanana {
@@ -291,12 +302,24 @@ namespace {
     {
         // create list of textures we want loading - ARViewController will do this for us
         int nTextures = sizeof(textureFilenames) / sizeof(textureFilenames[0]);
-        for (int i = 0; i < nTextures; ++i)
+        for (int i = 0; i < nTextures; ++i) {
             [textureList addObject: [NSString stringWithUTF8String:textureFilenames[i]]];
+        }
+        
+        [self createLabel: @"Hello"];
     }
     return self;
 }
 
+- (void)createLabel:(NSString *)text {
+    label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 568, 30)];
+    label.transform = CGAffineTransformMakeRotation(M_PI_2*2);
+    label.text = text;
+    label.backgroundColor = [UIColor blackColor];
+    label.textColor = [UIColor orangeColor];
+    [self addSubview:label];
+    [label release];
+}
 
 
 @end
