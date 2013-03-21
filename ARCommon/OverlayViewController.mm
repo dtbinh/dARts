@@ -97,6 +97,7 @@ Qualcomm Confidential and Proprietary
         autofocusSingleIx = [mainOptionsAS addButtonWithTitle:@"Focus"];
     }
     
+    /*
     // add 'select target' if there is more than one target
     if (MENU_OPTION_WANTED == selectTargetIx && qUtils.targetsList && [qUtils.targetsList count] > 1)
     {
@@ -105,6 +106,7 @@ Qualcomm Confidential and Proprietary
         NSString *text = [NSString stringWithFormat:@"Switch to %@", targetEntry.name];
         selectTargetIx = [mainOptionsAS addButtonWithTitle:text];
     }
+    */
     
     
     // The cancel button is added in showOverlay rather than here.  This enables

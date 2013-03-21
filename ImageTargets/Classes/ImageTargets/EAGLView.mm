@@ -9,7 +9,6 @@
 #import "math.h"
 #import "SampleMath.h"
 #import <vector>
-
 #import <QCAR/Renderer.h>
 #import <QCAR/VideoBackgroundConfig.h>
 #import "QCARutils.h"
@@ -18,7 +17,8 @@
 
 #define PI 3.1415926
 #define CAMERA_TO_DART_DISTANCE 80.0
-#define THROWING_DISTANCE 250.0
+
+float throwingDistance = 250.0f;
 
 #define THROWING_PHASE 0
 #define COLLECTION_PHASE 1
@@ -50,6 +50,17 @@ int throwthree = 0;
 #define THROW_3 3
 
 int currentThrow = 1;
+
+#define DIFFICULTY_EASY 0
+#define DIFFICULTY_MEDIUM 1
+#define DIFFICULTY_HARD 2
+
+int currentDifficulty = DIFFICULTY_EASY;
+
+int touchesCounter = 0;
+
+float drunkness = 0;
+bool drunknessIncreasing = TRUE;
 
 int targetIndex = 0;
 float distance;
@@ -131,14 +142,19 @@ namespace {
         distance = [self computeDistanceToTarget:result->getPose()];
         cameraPosition = [self computeCameraPosition:modelViewMatrix];
         
+        [self calculateDrunkness];
+        
         //draw stuff relative to the viewport
         
         if(currentPhase == THROWING_PHASE){
-            if (distance <= THROWING_DISTANCE){
+            if (distance <= throwingDistance){
                 [self setLabel:statusLabel toText:@"Step away from the dart board!"];
             }
-            else if(distance > THROWING_DISTANCE){
+            else if(distance > throwingDistance){
                 [self setLabel:statusLabel toText:@"Accelerate device to throw!"];
+                if(currentDifficulty == DIFFICULTY_HARD){
+                    [self setLabel:statusLabel toText:@"Throw when the dart is centered!"];
+                }
                 [self drawDartInFrontOfCamera];
             }
         }
@@ -167,13 +183,38 @@ namespace {
     [self presentFramebuffer];
 }
 
+- (void)calculateDrunkness
+{
+    
+    if(drunknessIncreasing){
+        drunkness += 0.7;
+    }
+    else{
+        drunkness -= 0.7;
+    }
+    
+    if(drunkness > 15.0){
+        drunknessIncreasing = FALSE;
+    }
+    else if (drunkness < -15.0){
+        drunknessIncreasing = TRUE;
+    }
+
+}
+
 - (void)accelerometer:(UIAccelerometer *)accelerometer didAccelerate:(UIAcceleration *)acceleration {
-    if(acceleration.z > 0.3f && distance > THROWING_DISTANCE && currentPhase == THROWING_PHASE){
+    if(acceleration.z > 0.3f && distance > throwingDistance && currentPhase == THROWING_PHASE){
         NSLog(@"Throw speed: %f", acceleration.z);
         dartPoseTarget = modelViewMatrix;
         dartPoseCamera = cameraPosition;
         //project the middle of the touch screen to world coordinates
         QCAR::Vec2F coord = [self projectPoint:QCAR::Vec2F(284.0f,160.0f)];
+        
+        //add a little bit of drunkness to the equation...
+        if(currentDifficulty == DIFFICULTY_HARD){
+            coord.data[0] = coord.data[0] + (drunkness * 2);
+        }
+        
         //push the new world coordinate on the vector of the dart positions
         dartPositions.push_back(coord);
         //compute the distance of that point to the origin
@@ -248,18 +289,51 @@ namespace {
 
 - (void) touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
 {
-    //not needed
+    
 }
 
+//for swipe gestures!
 - (void) touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event
 {
-    //not needed
+    touchesCounter++;
+    NSLog(@"touch count: %i", touchesCounter);
+    if(touchesCounter == 20){
+        UIActionSheet *popupQuery = [[UIActionSheet alloc] initWithTitle:@"Choose Difficulty" delegate:self cancelButtonTitle:@"Cancel" destructiveButtonTitle:nil otherButtonTitles:@"Easy", @"Medium", @"Hard", nil];
+        popupQuery.actionSheetStyle = UIActionSheetStyleBlackOpaque;
+        [popupQuery showInView:self];
+        [popupQuery release];
+        touchesCounter = 0;
+    }
+    
 }
+
+-(void)actionSheet:(UIActionSheet *)actionSheet clickedButtonAtIndex:(NSInteger)buttonIndex {
+    if (buttonIndex == 0) {
+        NSLog(@"Difficult Easy");
+        throwingDistance = 250.0f;
+        currentDifficulty = DIFFICULTY_EASY;
+    }
+    else if (buttonIndex == 1) {
+        NSLog(@"Difficulty Medium");
+        throwingDistance = 300.0f;
+        currentDifficulty = DIFFICULTY_MEDIUM;
+    }
+    else if (buttonIndex == 2) {
+        NSLog(@"Difficulty Hard");
+        throwingDistance = 350.0f;
+        currentDifficulty = DIFFICULTY_HARD;
+    } else if (buttonIndex == 3) {
+        NSLog(@"Menu Cancelled");
+    }
+    
+}
+
 
 - (void) touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event
 {
+    touchesCounter = 0;
     if(currentPhase == COLLECTION_PHASE){
-        UITouch *touch = [touches anyObject];
+        UITouch* touch = [touches anyObject];
         CGPoint location = [touch locationInView:self];
         QCAR::Vec2F coord = [self projectPoint: QCAR::Vec2F(location.x, location.y)];
         int index = [self getDartAt:coord];
@@ -325,7 +399,12 @@ namespace {
     glMatrixMode(GL_MODELVIEW);
     dartPoseCamera = cameraPosition;
     //we don't want x and y translation because the dart should be in front of the viewport
-    dartPoseCamera.data[12] = 0.0f;
+    if(currentDifficulty == DIFFICULTY_HARD){
+        dartPoseCamera.data[12] = drunkness;
+    }
+    else{
+        dartPoseCamera.data[12] = 0.0f;
+    }
     dartPoseCamera.data[13] = 0.0f;
     //we want the dart floating in front of the viewport
     dartPoseCamera.data[14] = CAMERA_TO_DART_DISTANCE;
@@ -385,7 +464,6 @@ namespace {
         self.accelerometer = [UIAccelerometer sharedAccelerometer];
         self.accelerometer.updateInterval = 0.1;
         self.accelerometer.delegate = self;
-        
         
         [self initStatusLabel];
         [self initTurnLabel];
@@ -803,33 +881,6 @@ namespace {
     // QCAR::setHint(QCAR::HINT_MAX_SIMULTANEOUS_IMAGE_TARGETS, 2);
 }
 
-- (void) setup3dObjects
-{
-    // build the array of objects we want drawn and their texture
-    // in this example we have 3 targets and require 3 models
-    // but using the same underlying 3D model of a teapot, differentiated
-    // by using a different texture for each
-    
-    for (int i=0; i < [textures count]; i++)
-    {
-        Object3D *obj3D = [[Object3D alloc] init];
-        
-        obj3D.numVertices = NUM_TEAPOT_OBJECT_VERTEX;
-        obj3D.vertices = teapotVertices;
-        obj3D.normals = teapotNormals;
-        obj3D.texCoords = teapotTexCoords;
-        
-        obj3D.numIndices = NUM_TEAPOT_OBJECT_INDEX;
-        obj3D.indices = teapotIndices;
-        
-        obj3D.texture = [textures objectAtIndex:i];
-        
-        [objects3D addObject:obj3D];
-        [obj3D release];
-    }
-}
-
-
 - (void)enableStuff {
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_LIGHTING);
@@ -849,62 +900,6 @@ namespace {
     glDisableClientState(GL_VERTEX_ARRAY);
     glDisableClientState(GL_NORMAL_ARRAY);
     glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-}
-
-
-- (void)drawObjectDragged {
-    glPushMatrix();
-    glTranslatef(0.0f, 0.0f, 80.0f);
-    glRotatef(180.0f, 1.0f, 0.0f, 0.0f);
-    glRotatef(180.0f, 0.0f, 0.0f, 1.0f);
-    [self drawObjectX:0 andY:0];
-    glPopMatrix();
-}
-
-- (void)drawObjectX: (int)x andY:(int)y {
-    glPushMatrix();
-    //translate from center to where the object should be drawn
-    glTranslatef(x, y, 0.0f);
-    glTranslatef(0.0f, 0.0f, -kObjectScale);
-    Object3D *obj3d = [objects3D objectAtIndex:targetIndex];
-    // Draw object
-    glBindTexture(GL_TEXTURE_2D, [obj3d.texture textureID]);
-    glTexCoordPointer(2, GL_FLOAT, 0, (const GLvoid*) obj3d.texCoords);
-    glVertexPointer(3, GL_FLOAT, 0, (const GLvoid*)obj3d.vertices);
-    glNormalPointer(GL_FLOAT, 0, (const GLvoid*)obj3d.normals);
-    glDrawElements(GL_TRIANGLES, obj3d.numIndices, GL_UNSIGNED_SHORT, (const GLvoid*)obj3d.indices);
-    //translate back to the origin / center
-    glTranslatef(-x, -y, 0.0f);
-    glPopMatrix();
-}
-
-- (void)drawObject
-{
-    Object3D *obj3D = [objects3D objectAtIndex:targetIndex];
-    glTranslatef(0.0f, 0.0f, -kObjectScale);
-    glPushMatrix();
-    glBindTexture(GL_TEXTURE_2D, [obj3D.texture textureID]);
-    glTexCoordPointer(2, GL_FLOAT, 0, (const GLvoid*)obj3D.texCoords);
-    glVertexPointer(3, GL_FLOAT, 0, (const GLvoid*)obj3D.vertices);
-    glNormalPointer(GL_FLOAT, 0, (const GLvoid*)obj3D.normals);
-    glDrawElements(GL_TRIANGLES, obj3D.numIndices, GL_UNSIGNED_SHORT, (const GLvoid*)obj3D.indices);
-    glPopMatrix();
-}
-
-- (void)drawCircle:(GLfloat)size
-{
-    GLDrawCircle(360, size, YES);
-}
-
-- (void)drawBullseye
-{
-    glPushMatrix();
-    glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-    [self drawCircle:80.0f];
-    glTranslatef(0.0f, 0.0f, 1.0f);
-    glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
-    [self drawCircle:10.0f];
-    glPopMatrix();
 }
 
 - (float)computeDistanceToTarget:(QCAR::Matrix34F)pose {
@@ -941,7 +936,9 @@ namespace {
     glPopMatrix();
 }
 
-
+-(IBAction)showActionSheet:(id)sender {
+    //do nothing
+}
 
 @end
 
