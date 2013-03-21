@@ -8,6 +8,7 @@
 #import "banana.h"
 #import "math.h"
 #import "SampleMath.h"
+#import <vector>
 
 #import <QCAR/Renderer.h>
 #import <QCAR/VideoBackgroundConfig.h>
@@ -16,7 +17,18 @@
 #define _USE_MATH_DEFINES
 
 #define PI 3.1415926
-#define CAMERA_TO_DART_DISTANCE 100.0
+#define CAMERA_TO_DART_DISTANCE 80.0
+#define THROWING_DISTANCE 250.0
+
+#define THROWING_PHASE 0
+#define COLLECTION_PHASE 1
+
+int currentPhase = 0;
+
+#define PLAYER_A 0
+#define PLAYER_B 1
+
+int currentPlayer = 0;
 
 #define NOT_ON_BOARD -1
 #define INNER_BULL 0
@@ -27,17 +39,44 @@
 #define DOUBLE_RING 5
 #define NUMBER_AREA 6
 
+#define FINAL_SCORE 300;
 
-float dartboardScalefactor = 200.0f;
-float dartScalefactor = 200.0f;
+int throwone = 0;
+int throwtwo = 0;
+int throwthree = 0;
+
+#define THROW_1 1
+#define THROW_2 2
+#define THROW_3 3
+
+int currentThrow = 1;
+
 int targetIndex = 0;
 float distance;
 QCAR::Matrix44F modelViewMatrix;
 QCAR::Matrix44F cameraPosition;
 QCAR::Matrix44F dartPoseCamera;
 QCAR::Matrix44F dartPoseTarget;
-UILabel* label;
 bool throwDart = NO;
+std::vector<QCAR::Vec2F> dartPositions;
+
+
+UILabel * statusLabel;
+UILabel * turnLabel;
+UILabel * playerAScoreLabel;
+UILabel * playerBScoreLabel;
+UILabel * playerADartLabel;
+UILabel * playerBDartLabel;
+UILabel * playerAThrowOneLabel;
+UILabel * playerBThrowOneLabel;
+UILabel * playerAThrowTwoLabel;
+UILabel * playerBThrowTwoLabel;
+UILabel * playerAThrowThreeLabel;
+UILabel * playerBThrowThreeLabel;
+
+int playerAScore = 0;
+int playerBScore = 0;
+int numberOfDarts = 3;
 
 //C++ function prototypes
 void GLDrawCircle (int circleSegments, CGFloat circleSize, bool filled);
@@ -82,39 +121,44 @@ namespace {
     glMatrixMode(GL_PROJECTION);
     glLoadMatrixf(qUtils.projectionMatrix.data);
     
-    //draw stuff that is always visible - like the dart
+    //draw stuff that is always visible
     
     // draw stuff that is only visible when we see the target
     if (state.getNumTrackableResults() == 1) {
+        
         const QCAR::TrackableResult* result = state.getTrackableResult(targetIndex);
         modelViewMatrix = QCAR::Tool::convertPose2GLMatrix(result->getPose());
         distance = [self computeDistanceToTarget:result->getPose()];
         cameraPosition = [self computeCameraPosition:modelViewMatrix];
         
-        //[self printMatrix:cameraPosition];
-        
-        if (!throwDart){
-            [self drawDartInFrontOfCamera];
-        }
-        else {
-            glPushMatrix();
-            glMatrixMode(GL_MODELVIEW);
-            dartPoseTarget = modelViewMatrix;
-            glLoadMatrixf(dartPoseTarget.data);
-            [self drawDart];
-            glPopMatrix();
-        }
-        
         //draw stuff relative to the viewport
+        
+        if(currentPhase == THROWING_PHASE){
+            if (distance <= THROWING_DISTANCE){
+                [self setLabel:statusLabel toText:@"Step away from the dart board!"];
+            }
+            else if(distance > THROWING_DISTANCE){
+                [self setLabel:statusLabel toText:@"Accelerate device to throw!"];
+                [self drawDartInFrontOfCamera];
+            }
+        }
+        else if (currentPhase == COLLECTION_PHASE){
+            [self setLabel:statusLabel toText:@"Collect darts by tapping them!"];
+        }
+        
         
         glMatrixMode(GL_MODELVIEW);
         glLoadMatrixf(modelViewMatrix.data);
         
         //draw stuff relative to the image target
         
+        for(int i = 0; i < dartPositions.size(); i ++){
+            [self drawDartAtPosition:dartPositions.at(i)];
+        }
 
-        //[self drawDartboard];
-        //[self drawDart];
+    }
+    else {
+        [self setLabel:statusLabel toText:@"Aim at the dartboard!"];
     }
     
     [self disableStuff];
@@ -124,13 +168,155 @@ namespace {
 }
 
 - (void)accelerometer:(UIAccelerometer *)accelerometer didAccelerate:(UIAcceleration *)acceleration {
-    if(acceleration.z > 0.5f){
+    if(acceleration.z > 0.3f && distance > THROWING_DISTANCE && currentPhase == THROWING_PHASE){
         NSLog(@"Throw speed: %f", acceleration.z);
         dartPoseTarget = modelViewMatrix;
         dartPoseCamera = cameraPosition;
-        //dartPoseTarget.data[14] = distance - CAMERA_TO_DART_DISTANCE;
-        throwDart = YES;
+        //project the middle of the touch screen to world coordinates
+        QCAR::Vec2F coord = [self projectPoint:QCAR::Vec2F(284.0f,160.0f)];
+        //push the new world coordinate on the vector of the dart positions
+        dartPositions.push_back(coord);
+        //compute the distance of that point to the origin
+        float distanceFromOrigin = [self distanceFromOrigin:coord];
+        //based on this distance, return the target area (inner bullseye etc.)
+        int targetArea = [self getTargetArea:distanceFromOrigin];
+        //based on the angle from the origin, determine which number was hit
+        int number = [self getNumberFromAngle:[self getAngleFromPoint:coord]];
+        //now get the score
+        int score = [self getScoreBasedOnArea:targetArea andNumber:number];
+        //add the score to the current score
+        NSString *scoreText = [self getScoreTextBasedOnArea:targetArea andNumber:number];
+        
+        //depending on who is the current player - update the score and number of darts
+        if(currentPlayer == PLAYER_A){
+            if(currentThrow == THROW_1){
+                throwone = score;
+                [self setLabel:playerAThrowOneLabel toText:scoreText];
+            }
+            else if(currentThrow == THROW_2){
+                throwtwo = score;
+                [self setLabel:playerAThrowTwoLabel toText:scoreText];
+            }
+            else if(currentThrow == THROW_3){
+                throwthree = score;
+                [self setLabel:playerAThrowThreeLabel toText:scoreText];
+            }
+            playerAScore += score;
+            //set new score
+            [self setLabel:playerAScoreLabel toText: [NSString stringWithFormat:@"Score: %i", playerAScore]];
+            //subtract 1 from the total number of darts
+            numberOfDarts = numberOfDarts - 1;
+            //set the dart label accordingly
+            [self setLabel:playerADartLabel toText:[NSString stringWithFormat:@"Darts: %i", numberOfDarts]];
+        }
+        else if(currentPlayer == PLAYER_B){
+            if(currentThrow == THROW_1){
+                throwone = score;
+                [self setLabel:playerBThrowOneLabel toText:scoreText];
+            }
+            else if(currentThrow == THROW_2){
+                throwtwo = score;
+                [self setLabel:playerBThrowTwoLabel toText:scoreText];
+            }
+            else if(currentThrow == THROW_3){
+                throwthree = score;
+                [self setLabel:playerBThrowThreeLabel toText:scoreText];
+            }
+            playerBScore += score;
+            //set new score
+            [self setLabel:playerBScoreLabel toText: [NSString stringWithFormat:@"Score: %i", playerBScore]];
+            //subtract 1 from the total number of darts
+            numberOfDarts = numberOfDarts - 1;
+            //set the dart label accordingly
+            [self setLabel:playerBDartLabel toText:[NSString stringWithFormat:@"Darts: %i", numberOfDarts]];
+        }
+        
+        //if the current player has no more darts left, the collection phase begins
+        if(numberOfDarts == 0){
+            throwone = 0;
+            throwtwo = 0;
+            throwthree = 0;
+            currentThrow = THROW_1;
+            currentPhase = COLLECTION_PHASE;
+        }
+        else{
+            currentThrow = currentThrow + 1;
+        }
+        
     }
+}
+
+- (void) touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    //not needed
+}
+
+- (void) touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    //not needed
+}
+
+- (void) touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    if(currentPhase == COLLECTION_PHASE){
+        UITouch *touch = [touches anyObject];
+        CGPoint location = [touch locationInView:self];
+        QCAR::Vec2F coord = [self projectPoint: QCAR::Vec2F(location.x, location.y)];
+        int index = [self getDartAt:coord];
+        if (index != -1){
+            dartPositions.erase(dartPositions.begin() + index);
+            NSLog(@"You picked up a dart!");
+            numberOfDarts = numberOfDarts + 1;
+            if(currentPlayer == PLAYER_A){
+                [self setLabel:playerADartLabel toText:[NSString stringWithFormat:@"Darts: %i", numberOfDarts]];
+            }
+            else if(currentPlayer == PLAYER_B){
+                [self setLabel:playerBDartLabel toText:[NSString stringWithFormat:@"Darts: %i", numberOfDarts]];
+            }
+        
+        }
+        
+        //if the number of darts equals 3 again, change player and phase
+        if(numberOfDarts == 3){
+            if(currentPlayer == PLAYER_A){
+                [self setLabel:playerAThrowOneLabel toText:@""];
+                [self setLabel:playerAThrowTwoLabel toText:@""];
+                [self setLabel:playerAThrowThreeLabel toText:@""];
+                currentPlayer = PLAYER_B;
+                turnLabel.text = @"Player B";
+                turnLabel.textColor = [UIColor redColor];
+            }
+            else if(currentPlayer == PLAYER_B){
+                [self setLabel:playerBThrowOneLabel toText:@""];
+                [self setLabel:playerBThrowTwoLabel toText:@""];
+                [self setLabel:playerBThrowThreeLabel toText:@""];
+                currentPlayer = PLAYER_A;
+                turnLabel.text = @"Player A";
+                turnLabel.textColor = [UIColor blueColor];
+            }
+            currentPhase = THROWING_PHASE;
+        }
+
+    }
+}
+
+- (void) touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    //not needed
+}
+
+
+- (int)getDartAt: (QCAR::Vec2F)point
+{
+    int index = -1;
+    for (int i = 0; i < dartPositions.size(); i++) {
+        float distance = sqrt(pow(point.data[0] - dartPositions[i].data[0], 2.0) + pow(point.data[1] - dartPositions[i].data[1], 2.0));
+        if (distance < 15.0) {
+            index = i;
+            break;
+        }
+    }
+    return index;
 }
 
 - (void)drawDartInFrontOfCamera
@@ -152,11 +338,27 @@ namespace {
     glPopMatrix();
 }
 
+- (void)drawDartAtPosition: (QCAR::Vec2F) position
+{
+
+    glPushMatrix();
+    glTranslatef(position.data[0], position.data[1], 32.0f);
+    glScalef(0.5f, 0.5f, 0.5f);
+    glRotatef(4.0f, 1.0f, 0.0f, 0.0f);
+    glRotatef(90.0f, 0.0f, 1.0f, 0.0f);
+    glVertexPointer(3, GL_FLOAT, 0, dartVerts);
+    glNormalPointer(GL_FLOAT, 0, dartNormals);
+    glTexCoordPointer(2, GL_FLOAT, 0, dartTexCoords);
+    glDrawArrays(GL_TRIANGLES, 0, dartNumVerts);
+    glPopMatrix();
+
+}
+
 - (void)drawDart {
     //dart origin is in the middle -> have to pull it out of the board
-    glTranslatef(0.0f, 0.0f, 32.0f);
     
     glPushMatrix();
+    glTranslatef(0.0f, 0.0f, 32.0f);
     glScalef(0.5f, 0.5f, 0.5f);
     glRotatef(8.0f, 1.0f, 0.0f, 0.0f);
     glRotatef(90.0f, 0.0f, 1.0f, 0.0f);
@@ -167,33 +369,191 @@ namespace {
     glPopMatrix();
 }
 
-- (void) touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
+- (id)initWithFrame:(CGRect)frame
 {
-    //get the location of the tap in screen coordinates
-    UITouch* touch = [touches anyObject];
-    CGPoint location = [touch locationInView:self];
-    //put plane coordinates into 2D vector
-    QCAR::Vec2F coord = [self projectPoint: QCAR::Vec2F(location.x, location.y)];
-    float distanceFromOrigin = [self distanceFromOrigin:coord];
-    int targetArea = [self getTargetArea:distanceFromOrigin];
-    [self printTargetArea:targetArea];
-    int number = [self getNumberFromAngle:[self getAngleFromPoint:coord]];
-    [self getScoreBasedOnArea:targetArea andNumber:number];
+    self = [super initWithFrame:frame];
+    
+	if (self)
+    {
+        // create list of textures we want loading - ARViewController will do this for us
+        int nTextures = sizeof(textureFilenames) / sizeof(textureFilenames[0]);
+        for (int i = 0; i < nTextures; ++i) {
+            [textureList addObject: [NSString stringWithUTF8String:textureFilenames[i]]];
+        }
+        
+        //start the accelerometer
+        self.accelerometer = [UIAccelerometer sharedAccelerometer];
+        self.accelerometer.updateInterval = 0.1;
+        self.accelerometer.delegate = self;
+        
+        
+        [self initStatusLabel];
+        [self initTurnLabel];
+        [self initPlayerAScoreLabel];
+        [self initPlayerBScoreLabel];
+        [self initPlayerADartLabel];
+        [self initPlayerBDartLabel];
+        [self initPlayerAThrowOneLabel];
+        [self initPlayerBThrowOneLabel];
+        [self initPlayerAThrowTwoLabel];
+        [self initPlayerBThrowTwoLabel];
+        [self initPlayerAThrowThreeLabel];
+        [self initPlayerBThrowThreeLabel];
+        
+        
+    }
+    return self;
 }
 
-- (void) touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event
+- (void) initPlayerBThrowThreeLabel
 {
-    //not needed
+    playerBThrowThreeLabel = [[UILabel alloc] initWithFrame:CGRectMake(0.0f, 60.0f, 100.0f, 30.0f)];
+    playerBThrowThreeLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    //playerBThrowThreeLabel.text = @"Throw Three";
+    playerBThrowThreeLabel.textAlignment = NSTextAlignmentCenter;
+    playerBThrowThreeLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerBThrowThreeLabel.backgroundColor = [UIColor clearColor];
+    playerBThrowThreeLabel.textColor = [UIColor redColor];
+    [self addSubview: playerBThrowThreeLabel];
 }
 
-- (void) touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event
+- (void) initPlayerAThrowThreeLabel
 {
-    //not needed
+    playerAThrowThreeLabel = [[UILabel alloc] initWithFrame:CGRectMake(468.0f, 60.0f, 100.0f, 30.0f)];
+    playerAThrowThreeLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    //playerAThrowThreeLabel.text = @"Throw Three";
+    playerAThrowThreeLabel.textAlignment = NSTextAlignmentCenter;
+    playerAThrowThreeLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerAThrowThreeLabel.backgroundColor = [UIColor clearColor];
+    playerAThrowThreeLabel.textColor = [UIColor blueColor];
+    [self addSubview: playerAThrowThreeLabel];
 }
 
-- (void) touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event
+- (void) initPlayerBThrowTwoLabel
 {
-    //not needed
+    playerBThrowTwoLabel = [[UILabel alloc] initWithFrame:CGRectMake(0.0f, 30.0f, 100.0f, 30.0f)];
+    playerBThrowTwoLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    //playerBThrowTwoLabel.text = @"Throw Two";
+    playerBThrowTwoLabel.textAlignment = NSTextAlignmentCenter;
+    playerBThrowTwoLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerBThrowTwoLabel.backgroundColor = [UIColor clearColor];
+    playerBThrowTwoLabel.textColor = [UIColor redColor];
+    [self addSubview: playerBThrowTwoLabel];
+}
+
+- (void) initPlayerAThrowTwoLabel
+{
+    playerAThrowTwoLabel = [[UILabel alloc] initWithFrame:CGRectMake(468.0f, 30.0f, 100.0f, 30.0f)];
+    playerAThrowTwoLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    //playerAThrowTwoLabel.text = @"Throw Two";
+    playerAThrowTwoLabel.textAlignment = NSTextAlignmentCenter;
+    playerAThrowTwoLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerAThrowTwoLabel.backgroundColor = [UIColor clearColor];
+    playerAThrowTwoLabel.textColor = [UIColor blueColor];
+    [self addSubview: playerAThrowTwoLabel];
+}
+
+- (void) initPlayerBThrowOneLabel
+{
+    playerBThrowOneLabel = [[UILabel alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 100.0f, 30.0f)];
+    playerBThrowOneLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    //playerBThrowOneLabel.text = @"Throw One";
+    playerBThrowOneLabel.textAlignment = NSTextAlignmentCenter;
+    playerBThrowOneLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerBThrowOneLabel.backgroundColor = [UIColor clearColor];
+    playerBThrowOneLabel.textColor = [UIColor redColor];
+    [self addSubview: playerBThrowOneLabel];
+}
+
+- (void) initPlayerAThrowOneLabel
+{
+    playerAThrowOneLabel = [[UILabel alloc] initWithFrame:CGRectMake(468.0f, 0.0f, 100.0f, 30.0f)];
+    playerAThrowOneLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    //playerAThrowOneLabel.text = @"Throw One";
+    playerAThrowOneLabel.textAlignment = NSTextAlignmentCenter;
+    playerAThrowOneLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerAThrowOneLabel.backgroundColor = [UIColor clearColor];
+    playerAThrowOneLabel.textColor = [UIColor blueColor];
+    [self addSubview: playerAThrowOneLabel];
+}
+
+- (void) initTurnLabel
+{
+    turnLabel = [[UILabel alloc] initWithFrame:CGRectMake(134.0f, 290.0f, 300.0f, 30.0f)];
+    turnLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    turnLabel.text = @"Player A";
+    turnLabel.textAlignment = NSTextAlignmentCenter;
+    turnLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    turnLabel.backgroundColor = [UIColor clearColor];
+    turnLabel.textColor = [UIColor blueColor];
+    [self addSubview: turnLabel];
+}
+
+- (void) initPlayerBDartLabel
+{
+    playerBDartLabel = [[UILabel alloc] initWithFrame:CGRectMake(0.0f, 260.0f, 100.0f, 30.0f)];
+    playerBDartLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    playerBDartLabel.text = @"Darts: 3";
+    playerBDartLabel.textAlignment = NSTextAlignmentCenter;
+    playerBDartLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerBDartLabel.backgroundColor = [UIColor clearColor];
+    playerBDartLabel.textColor = [UIColor redColor];
+    [self addSubview: playerBDartLabel];
+}
+
+- (void) initPlayerADartLabel
+{
+    playerADartLabel = [[UILabel alloc] initWithFrame:CGRectMake(468.0f, 260.0f, 100.0f, 30.0f)];
+    playerADartLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    playerADartLabel.text = @"Darts: 3";
+    playerADartLabel.textAlignment = NSTextAlignmentCenter;
+    playerADartLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerADartLabel.backgroundColor = [UIColor clearColor];
+    playerADartLabel.textColor = [UIColor blueColor];
+    [self addSubview: playerADartLabel];
+}
+
+- (void) initPlayerBScoreLabel
+{
+    playerBScoreLabel = [[UILabel alloc] initWithFrame:CGRectMake(0.0f, 290.0f, 100.0f, 30.0f)];
+    playerBScoreLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    playerBScoreLabel.text = @"Score: 0";
+    playerBScoreLabel.textAlignment = NSTextAlignmentCenter;
+    playerBScoreLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerBScoreLabel.backgroundColor = [UIColor clearColor];
+    playerBScoreLabel.textColor = [UIColor redColor];
+    [self addSubview:playerBScoreLabel];
+}
+
+- (void) initPlayerAScoreLabel
+{
+    playerAScoreLabel = [[UILabel alloc] initWithFrame:CGRectMake(468.0f, 290.0f, 100.0f, 30.0f)];
+    playerAScoreLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    playerAScoreLabel.text = @"Score: 0";
+    playerAScoreLabel.textAlignment = NSTextAlignmentCenter;
+    playerAScoreLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    playerAScoreLabel.backgroundColor = [UIColor clearColor];
+    playerAScoreLabel.textColor = [UIColor blueColor];
+    [self addSubview:playerAScoreLabel];
+}
+
+- (void) initStatusLabel
+{
+    statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(134.0f, 0.0f, 300.0f, 30.0f)];
+    statusLabel.transform = CGAffineTransformMakeRotation(M_PI_2 * 2);
+    statusLabel.text = @"STATUS";
+    statusLabel.textAlignment = NSTextAlignmentCenter;
+    statusLabel.font = [UIFont fontWithName:@"Arial-BoldMT" size:16];
+    statusLabel.backgroundColor = [UIColor clearColor];
+    statusLabel.textColor = [UIColor greenColor];
+    [self addSubview:statusLabel];
+}
+
+- (void) setLabel: (UILabel *) label toText: (NSString *) text
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        label.text = text;
+    });
 }
 
 - (void) printMatrix: (QCAR::Matrix44F) m
@@ -244,6 +604,32 @@ namespace {
     NSLog(@"Score: %i", score);
     
     return score;
+}
+
+- (NSString *)getScoreTextBasedOnArea: (int)area andNumber: (int) number
+{
+    NSString *score;
+    
+    if(area == NUMBER_AREA || area == NOT_ON_BOARD){
+        score = @"Fail";
+    }
+    else if(area == INNER_AREA || area == OUTER_AREA){
+        score = [NSString stringWithFormat:@"Single %i", number];
+    }
+    else if(area == DOUBLE_RING){
+        score = [NSString stringWithFormat:@"Double %i", number];
+    }
+    else if(area == TRIPLE_RING){
+        score = [NSString stringWithFormat:@"Triple %i", number];
+    }
+    else if(area == OUTER_BULL){
+        score = [NSString stringWithFormat:@"Outer Bull"];
+    }
+    else if(area == INNER_BULL){
+        score = [NSString stringWithFormat:@"Bull's Eye"];
+    }
+    return score;
+
 }
 
 - (int)getNumberFromAngle: (float) angle
@@ -443,36 +829,6 @@ namespace {
     }
 }
 
-- (id)initWithFrame:(CGRect)frame
-{
-    self = [super initWithFrame:frame];
-    
-	if (self)
-    {
-        // create list of textures we want loading - ARViewController will do this for us
-        int nTextures = sizeof(textureFilenames) / sizeof(textureFilenames[0]);
-        for (int i = 0; i < nTextures; ++i) {
-            [textureList addObject: [NSString stringWithUTF8String:textureFilenames[i]]];
-        }
-        
-        //[self createLabel: @"Hello"];
-        self.accelerometer = [UIAccelerometer sharedAccelerometer];
-        self.accelerometer.updateInterval = .1;
-        self.accelerometer.delegate = self;
-        
-    }
-    return self;
-}
-
-- (void)createLabel:(NSString *)text {
-    label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 568, 30)];
-    label.transform = CGAffineTransformMakeRotation(M_PI_2*2);
-    label.text = text;
-    label.backgroundColor = [UIColor blackColor];
-    label.textColor = [UIColor orangeColor];
-    [self addSubview:label];
-    [label release];
-}
 
 - (void)enableStuff {
     glEnable(GL_TEXTURE_2D);
