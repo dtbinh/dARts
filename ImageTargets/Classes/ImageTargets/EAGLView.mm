@@ -16,6 +16,7 @@
 #define _USE_MATH_DEFINES
 
 #define PI 3.1415926
+#define CAMERA_TO_DART_DISTANCE 100.0
 
 #define NOT_ON_BOARD -1
 #define INNER_BULL 0
@@ -33,10 +34,10 @@ int targetIndex = 0;
 float distance;
 QCAR::Matrix44F modelViewMatrix;
 QCAR::Matrix44F cameraPosition;
+QCAR::Matrix44F dartPoseCamera;
+QCAR::Matrix44F dartPoseTarget;
 UILabel* label;
-NSString  *labelString;
-float width = 247.0f;
-float height = 173.0f;
+bool throwDart = NO;
 
 //C++ function prototypes
 void GLDrawCircle (int circleSegments, CGFloat circleSize, bool filled);
@@ -65,6 +66,8 @@ namespace {
 
 @implementation EAGLView
 
+@synthesize accelerometer;
+
 - (void)renderFrameQCAR {
     
     [self setFramebuffer];
@@ -79,25 +82,28 @@ namespace {
     glMatrixMode(GL_PROJECTION);
     glLoadMatrixf(qUtils.projectionMatrix.data);
     
-    //draw stuff that is always visible
-    
+    //draw stuff that is always visible - like the dart
     
     // draw stuff that is only visible when we see the target
     if (state.getNumTrackableResults() == 1) {
         const QCAR::TrackableResult* result = state.getTrackableResult(targetIndex);
         modelViewMatrix = QCAR::Tool::convertPose2GLMatrix(result->getPose());
-        [self computeDistanceToTarget:result->getPose()];
-        [self computeCameraPosition:modelViewMatrix];
+        distance = [self computeDistanceToTarget:result->getPose()];
+        cameraPosition = [self computeCameraPosition:modelViewMatrix];
         
-        float cam_x = cameraPosition.data[12];
-        float cam_y = cameraPosition.data[13];
-        float cam_z = cameraPosition.data[14];
+        //[self printMatrix:cameraPosition];
         
-        glPushMatrix();
-        glRotatef(90.0f, 0.0f, 1.0f, 0.0f);
-        glTranslatef(cam_x, cam_y, cam_z / 10);
-        [self drawDart];
-        glPopMatrix();
+        if (!throwDart){
+            [self drawDartInFrontOfCamera];
+        }
+        else {
+            glPushMatrix();
+            glMatrixMode(GL_MODELVIEW);
+            dartPoseTarget = modelViewMatrix;
+            glLoadMatrixf(dartPoseTarget.data);
+            [self drawDart];
+            glPopMatrix();
+        }
         
         //draw stuff relative to the viewport
         
@@ -107,7 +113,8 @@ namespace {
         //draw stuff relative to the image target
         
 
-        [self drawDart];
+        //[self drawDartboard];
+        //[self drawDart];
     }
     
     [self disableStuff];
@@ -116,122 +123,47 @@ namespace {
     [self presentFramebuffer];
 }
 
-- (void)enableStuff {
-    glEnable(GL_TEXTURE_2D);
-    glEnable(GL_LIGHTING);
-    glEnable(GL_LIGHT0);
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glEnableClientState(GL_NORMAL_ARRAY);
-    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
+- (void)accelerometer:(UIAccelerometer *)accelerometer didAccelerate:(UIAcceleration *)acceleration {
+    if(acceleration.z > 0.5f){
+        NSLog(@"Throw speed: %f", acceleration.z);
+        dartPoseTarget = modelViewMatrix;
+        dartPoseCamera = cameraPosition;
+        //dartPoseTarget.data[14] = distance - CAMERA_TO_DART_DISTANCE;
+        throwDart = YES;
+    }
 }
 
-- (void)disableStuff {
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);    
-    glDisable(GL_TEXTURE_2D);
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glDisableClientState(GL_NORMAL_ARRAY);
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-}
-
-- (void)computeDistanceToTarget:(QCAR::Matrix34F)pose {
-    QCAR::Vec3F position(pose.data[3], pose.data[7], pose.data[11]);
-    distance = sqrt(position.data[0] * position.data[0] +
-                    position.data[1] * position.data[1] +
-                    position.data[2] * position.data[2]);
-}
-
-- (void)computeCameraPosition:(QCAR::Matrix44F)modelViewMatrix {
-    QCAR::Matrix44F inverseMV = SampleMath::Matrix44FInverse(modelViewMatrix);
-    cameraPosition = SampleMath::Matrix44FTranspose(inverseMV);
-}
-
-- (void)drawBanana {
+- (void)drawDartInFrontOfCamera
+{
     glPushMatrix();
-    glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
-    glRotatef(-180.0f, 0.0f, 0.0f, 1.0f);
-    glVertexPointer(3, GL_FLOAT, 0, bananaVerts);
-    glNormalPointer(GL_FLOAT, 0, bananaNormals);
-    glTexCoordPointer(2, GL_FLOAT, 0, bananaTexCoords);
-    glDrawArrays(GL_TRIANGLES, 0, bananaNumVerts);
-    glPopMatrix();
-}
-
-- (void)drawDartboard {
-    glPushMatrix();
-    glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
-    glVertexPointer(3, GL_FLOAT, 0, dartboardVerts);
-    glNormalPointer(GL_FLOAT, 0, dartboardNormals);
-    glTexCoordPointer(2, GL_FLOAT, 0, dartboardTexCoords);
-    glDrawArrays(GL_TRIANGLES, 0, dartboardNumVerts);
+    glMatrixMode(GL_MODELVIEW);
+    dartPoseCamera = cameraPosition;
+    //we don't want x and y translation because the dart should be in front of the viewport
+    dartPoseCamera.data[12] = 0.0f;
+    dartPoseCamera.data[13] = 0.0f;
+    //we want the dart floating in front of the viewport
+    dartPoseCamera.data[14] = CAMERA_TO_DART_DISTANCE;
+    //the dart should not rotate when the camera rotates
+    dartPoseCamera.data[8] = 0.0f;
+    dartPoseCamera.data[9] = 0.0f;
+    dartPoseCamera.data[10] = 0.0f;
+    glLoadMatrixf(dartPoseCamera.data);
+    [self drawDart];
     glPopMatrix();
 }
 
 - (void)drawDart {
+    //dart origin is in the middle -> have to pull it out of the board
+    glTranslatef(0.0f, 0.0f, 32.0f);
+    
     glPushMatrix();
     glScalef(0.5f, 0.5f, 0.5f);
+    glRotatef(8.0f, 1.0f, 0.0f, 0.0f);
+    glRotatef(90.0f, 0.0f, 1.0f, 0.0f);
     glVertexPointer(3, GL_FLOAT, 0, dartVerts);
     glNormalPointer(GL_FLOAT, 0, dartNormals);
     glTexCoordPointer(2, GL_FLOAT, 0, dartTexCoords);
     glDrawArrays(GL_TRIANGLES, 0, dartNumVerts);
-    glPopMatrix();
-}
-
-- (void)drawObjectDragged {
-    glPushMatrix();
-    glTranslatef(0.0f, 0.0f, 80.0f);
-    glRotatef(180.0f, 1.0f, 0.0f, 0.0f);
-    glRotatef(180.0f, 0.0f, 0.0f, 1.0f);
-    [self drawObjectX:0 andY:0];
-    glPopMatrix();
-}
-
-- (void)drawObjectX: (int)x andY:(int)y {
-    glPushMatrix();
-    //translate from center to where the object should be drawn
-    glTranslatef(x, y, 0.0f);
-    glTranslatef(0.0f, 0.0f, -kObjectScale);
-    Object3D *obj3d = [objects3D objectAtIndex:targetIndex];
-    // Draw object
-    glBindTexture(GL_TEXTURE_2D, [obj3d.texture textureID]);
-    glTexCoordPointer(2, GL_FLOAT, 0, (const GLvoid*) obj3d.texCoords);
-    glVertexPointer(3, GL_FLOAT, 0, (const GLvoid*)obj3d.vertices);
-    glNormalPointer(GL_FLOAT, 0, (const GLvoid*)obj3d.normals);
-    glDrawElements(GL_TRIANGLES, obj3d.numIndices, GL_UNSIGNED_SHORT, (const GLvoid*)obj3d.indices);
-    //translate back to the origin / center
-    glTranslatef(-x, -y, 0.0f);
-    glPopMatrix();
-}
-
-- (void)drawObject
-{
-    Object3D *obj3D = [objects3D objectAtIndex:targetIndex];
-    glTranslatef(0.0f, 0.0f, -kObjectScale);
-    glPushMatrix();
-    glBindTexture(GL_TEXTURE_2D, [obj3D.texture textureID]);
-    glTexCoordPointer(2, GL_FLOAT, 0, (const GLvoid*)obj3D.texCoords);
-    glVertexPointer(3, GL_FLOAT, 0, (const GLvoid*)obj3D.vertices);
-    glNormalPointer(GL_FLOAT, 0, (const GLvoid*)obj3D.normals);
-    glDrawElements(GL_TRIANGLES, obj3D.numIndices, GL_UNSIGNED_SHORT, (const GLvoid*)obj3D.indices);
-    glPopMatrix();
-}
-
-- (void)drawCircle:(GLfloat)size
-{
-    GLDrawCircle(360, size, YES);
-}
-
-- (void)drawBullseye
-{
-    glPushMatrix();
-    glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-    [self drawCircle:80.0f];
-    glTranslatef(0.0f, 0.0f, 1.0f);
-    glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
-    [self drawCircle:10.0f];
     glPopMatrix();
 }
 
@@ -264,6 +196,14 @@ namespace {
     //not needed
 }
 
+- (void) printMatrix: (QCAR::Matrix44F) m
+{
+    NSLog(@"%f %f %f %f", m.data[0], m.data[1], m.data[2], m.data[3]);
+    NSLog(@"%f %f %f %f", m.data[4], m.data[5], m.data[6], m.data[7]);
+    NSLog(@"%f %f %f %f", m.data[8], m.data[9], m.data[10], m.data[11]);
+    NSLog(@"%f %f %f %f", m.data[12], m.data[13], m.data[14], m.data[15]);
+}
+
 - (QCAR::Vec2F)projectPoint: (QCAR::Vec2F)point
 {
     //define temporary variables for the plane coordinates
@@ -271,11 +211,6 @@ namespace {
     //project sreen points onto the plane
     projectScreenPointToPlane(point, QCAR::Vec3F(0, 0, 0), QCAR::Vec3F(0, 0, 1), intersection, lineStart, lineEnd);
     return QCAR::Vec2F(intersection.data[0], intersection.data[1]);
-}
-
-- (BOOL)isPointOnPlane: (QCAR::Vec2F)point
-{
-    return abs(point.data[0]) < (width / 2.0f) && abs(point.data[1]) < (height / 2.0f);
 }
 
 - (float)distanceFromOrigin: (QCAR::Vec2F)point
@@ -521,6 +456,10 @@ namespace {
         }
         
         //[self createLabel: @"Hello"];
+        self.accelerometer = [UIAccelerometer sharedAccelerometer];
+        self.accelerometer.updateInterval = .1;
+        self.accelerometer.delegate = self;
+        
     }
     return self;
 }
@@ -534,6 +473,118 @@ namespace {
     [self addSubview:label];
     [label release];
 }
+
+- (void)enableStuff {
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_NORMAL_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+}
+
+- (void)disableStuff {
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_TEXTURE_2D);
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisableClientState(GL_NORMAL_ARRAY);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+}
+
+
+- (void)drawObjectDragged {
+    glPushMatrix();
+    glTranslatef(0.0f, 0.0f, 80.0f);
+    glRotatef(180.0f, 1.0f, 0.0f, 0.0f);
+    glRotatef(180.0f, 0.0f, 0.0f, 1.0f);
+    [self drawObjectX:0 andY:0];
+    glPopMatrix();
+}
+
+- (void)drawObjectX: (int)x andY:(int)y {
+    glPushMatrix();
+    //translate from center to where the object should be drawn
+    glTranslatef(x, y, 0.0f);
+    glTranslatef(0.0f, 0.0f, -kObjectScale);
+    Object3D *obj3d = [objects3D objectAtIndex:targetIndex];
+    // Draw object
+    glBindTexture(GL_TEXTURE_2D, [obj3d.texture textureID]);
+    glTexCoordPointer(2, GL_FLOAT, 0, (const GLvoid*) obj3d.texCoords);
+    glVertexPointer(3, GL_FLOAT, 0, (const GLvoid*)obj3d.vertices);
+    glNormalPointer(GL_FLOAT, 0, (const GLvoid*)obj3d.normals);
+    glDrawElements(GL_TRIANGLES, obj3d.numIndices, GL_UNSIGNED_SHORT, (const GLvoid*)obj3d.indices);
+    //translate back to the origin / center
+    glTranslatef(-x, -y, 0.0f);
+    glPopMatrix();
+}
+
+- (void)drawObject
+{
+    Object3D *obj3D = [objects3D objectAtIndex:targetIndex];
+    glTranslatef(0.0f, 0.0f, -kObjectScale);
+    glPushMatrix();
+    glBindTexture(GL_TEXTURE_2D, [obj3D.texture textureID]);
+    glTexCoordPointer(2, GL_FLOAT, 0, (const GLvoid*)obj3D.texCoords);
+    glVertexPointer(3, GL_FLOAT, 0, (const GLvoid*)obj3D.vertices);
+    glNormalPointer(GL_FLOAT, 0, (const GLvoid*)obj3D.normals);
+    glDrawElements(GL_TRIANGLES, obj3D.numIndices, GL_UNSIGNED_SHORT, (const GLvoid*)obj3D.indices);
+    glPopMatrix();
+}
+
+- (void)drawCircle:(GLfloat)size
+{
+    GLDrawCircle(360, size, YES);
+}
+
+- (void)drawBullseye
+{
+    glPushMatrix();
+    glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+    [self drawCircle:80.0f];
+    glTranslatef(0.0f, 0.0f, 1.0f);
+    glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+    [self drawCircle:10.0f];
+    glPopMatrix();
+}
+
+- (float)computeDistanceToTarget:(QCAR::Matrix34F)pose {
+    QCAR::Vec3F position(pose.data[3], pose.data[7], pose.data[11]);
+    return sqrt(    position.data[0] * position.data[0] +
+                    position.data[1] * position.data[1] +
+                    position.data[2] * position.data[2]);
+}
+
+- (QCAR::Matrix44F)computeCameraPosition:(QCAR::Matrix44F)modelViewMatrix {
+    QCAR::Matrix44F inverseMV = SampleMath::Matrix44FInverse(modelViewMatrix);
+    return SampleMath::Matrix44FTranspose(inverseMV);
+}
+
+- (void)drawBanana {
+    glPushMatrix();
+    glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
+    glRotatef(-180.0f, 0.0f, 0.0f, 1.0f);
+    glVertexPointer(3, GL_FLOAT, 0, bananaVerts);
+    glNormalPointer(GL_FLOAT, 0, bananaNormals);
+    glTexCoordPointer(2, GL_FLOAT, 0, bananaTexCoords);
+    glDrawArrays(GL_TRIANGLES, 0, bananaNumVerts);
+    glPopMatrix();
+}
+
+- (void)drawDartboard {
+    glPushMatrix();
+    glScalef(0.5f, 0.5f, 0.5f);
+    glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
+    glVertexPointer(3, GL_FLOAT, 0, dartboardVerts);
+    glNormalPointer(GL_FLOAT, 0, dartboardNormals);
+    glTexCoordPointer(2, GL_FLOAT, 0, dartboardTexCoords);
+    glDrawArrays(GL_TRIANGLES, 0, dartboardNumVerts);
+    glPopMatrix();
+}
+
 
 
 @end
